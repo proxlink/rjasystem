@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Car QR Scanner Prototype</title>
+
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f4f6f8;
+      color: #1f2937;
+    }
+    .container {
+      max-width: 720px;
+      margin: auto;
+      padding: 20px;
+    }
+    h1 { margin-bottom: 6px; }
+    .subtitle { color: #6b7280; margin-top: 0; }
+
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 20px;
+      margin-top: 18px;
+      box-shadow: 0 4px 18px rgba(0,0,0,.08);
+    }
+
+    #reader {
+      width: 100%;
+      overflow: hidden;
+      border-radius: 12px;
+    }
+
+    button {
+      width: 100%;
+      border: 0;
+      border-radius: 10px;
+      padding: 14px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+
+    .primary { background: #111827; color: white; }
+    .secondary { background: #e5e7eb; color: #111827; }
+    .danger { background: #fee2e2; color: #991b1b; }
+
+    .hidden { display: none; }
+
+    .result {
+      margin-top: 18px;
+      padding: 18px;
+      border-radius: 12px;
+      background: #f9fafb;
+    }
+
+    .success {
+      border-left: 5px solid #16a34a;
+      background: #f0fdf4;
+    }
+
+    .error {
+      border-left: 5px solid #dc2626;
+      background: #fef2f2;
+    }
+
+    .info-row {
+      padding: 10px 0;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    .info-row:last-child { border-bottom: 0; }
+
+    .label {
+      display: block;
+      font-size: 12px;
+      color: #6b7280;
+      margin-bottom: 3px;
+    }
+
+    .value { font-size: 16px; font-weight: bold; }
+
+    input[type="date"] {
+      width: 100%;
+      padding: 13px;
+      border: 1px solid #d1d5db;
+      border-radius: 10px;
+      font-size: 16px;
+      margin-top: 8px;
+    }
+
+    .status {
+      display: inline-block;
+      padding: 5px 10px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: bold;
+      background: #e5e7eb;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 16px;
+      color: #6b7280;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>🚗 Car QR Scanner</h1>
+  <p class="subtitle">Prototype QR Scan + Supabase</p>
+
+  <div class="card">
+    <div id="reader"></div>
+    <button id="startBtn" class="primary">📷 MULA SCAN QR</button>
+    <button id="stopBtn" class="secondary hidden">STOP CAMERA</button>
+  </div>
+
+  <div id="message"></div>
+
+  <div id="carResult" class="card hidden">
+    <h2 id="resultTitle">Maklumat Kereta</h2>
+
+    <div class="result" id="carInfo">
+      <div class="info-row">
+        <span class="label">NO. ENJIN</span>
+        <span class="value" id="engineNo"></span>
+      </div>
+
+      <div class="info-row">
+        <span class="label">TARIKH MASUK</span>
+        <span class="value" id="dateIn"></span>
+      </div>
+
+      <div class="info-row">
+        <span class="label">TARIKH KELUAR</span>
+        <span class="value" id="dateOut"></span>
+      </div>
+
+      <div class="info-row">
+        <span class="label">LOKASI KERETA</span>
+        <span class="value" id="location"></span>
+      </div>
+
+      <div class="info-row">
+        <span class="label">STATUS</span>
+        <span class="status" id="status"></span>
+      </div>
+    </div>
+
+    <div id="dateOutSection" class="hidden">
+      <h3>📅 Pilih Tarikh Keluar</h3>
+      <input type="date" id="selectedDateOut">
+      <button id="updateDateOutBtn" class="primary">UPDATE TARIKH KELUAR</button>
+    </div>
+
+    <button id="scanAgainBtn" class="secondary">SCAN KERETA LAIN</button>
+  </div>
+</div>
+
+<script>
+  // =========================================================
+  // MASUKKAN SUPABASE URL DAN ANON KEY DI SINI
+  // =========================================================
+  const SUPABASE_URL = "PASTE_YOUR_SUPABASE_URL_HERE";
+  const SUPABASE_ANON_KEY = "PASTE_YOUR_SUPABASE_ANON_KEY_HERE";
+
+  const supabaseClient = window.supabase.createClient(
+    SUPABASE_URL,
+    SUPABASE_ANON_KEY
+  );
+
+  let html5QrCode = null;
+  let scanning = false;
+  let currentCar = null;
+
+  const startBtn = document.getElementById("startBtn");
+  const stopBtn = document.getElementById("stopBtn");
+  const message = document.getElementById("message");
+  const carResult = document.getElementById("carResult");
+  const dateOutSection = document.getElementById("dateOutSection");
+
+  function formatDate(value) {
+    if (!value) return "-";
+
+    const date = new Date(value);
+
+    return date.toLocaleString("ms-MY", {
+      timeZone: "Asia/Kuala_Lumpur",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  }
+
+  function showMessage(text, type = "success") {
+    message.innerHTML = `
+      <div class="card result ${type}">
+        <strong>${type === "success" ? "✓" : "✗"} ${text}</strong>
+      </div>
+    `;
+  }
+
+  function clearMessage() {
+    message.innerHTML = "";
+  }
+
+  async function startScanner() {
+    clearMessage();
+    carResult.classList.add("hidden");
+
+    if (
+      SUPABASE_URL.includes("PASTE_") ||
+      SUPABASE_ANON_KEY.includes("PASTE_")
+    ) {
+      showMessage("Masukkan Supabase URL dan Anon Key terlebih dahulu.", "error");
+      return;
+    }
+
+    html5QrCode = new Html5Qrcode("reader");
+
+    try {
+      scanning = true;
+
+      await html5QrCode.start(
+        { facingMode: "environment" },
+        {
+          fps: 10,
+          qrbox: { width: 250, height: 250 }
+        },
+        async (decodedText) => {
+          if (!scanning) return;
+
+          scanning = false;
+          await html5QrCode.stop();
+
+          startBtn.classList.remove("hidden");
+          stopBtn.classList.add("hidden");
+
+          await processEngineNumber(decodedText.trim());
+        },
+        () => {}
+      );
+
+      startBtn.classList.add("hidden");
+      stopBtn.classList.remove("hidden");
+
+    } catch (error) {
+      console.error(error);
+      showMessage("Tidak dapat membuka kamera. Pastikan permission camera dibenarkan.", "error");
+      scanning = false;
+    }
+  }
+
+  async function stopScanner() {
+    if (html5QrCode && scanning) {
+      try {
+        await html5QrCode.stop();
+      } catch (error) {
+        console.log(error);
+      }
+    }
+
+    scanning = false;
+    startBtn.classList.remove("hidden");
+    stopBtn.classList.add("hidden");
+  }
+
+  async function processEngineNumber(engineNumber) {
+    clearMessage();
+    carResult.classList.add("hidden");
+
+    showMessage("Sedang mencari no. enjin: " + engineNumber, "success");
+
+    const { data, error } = await supabaseClient
+      .from("cars")
+      .select("*")
+      .eq("engine_no", engineNumber)
+      .single();
+
+    if (error || !data) {
+      console.error(error);
+      showMessage("DATA KERETA TIDAK DIJUMPAI: " + engineNumber, "error");
+      return;
+    }
+
+    currentCar = data;
+
+    // =======================================================
+    // SCAN PERTAMA
+    // Jika date_in kosong -> terus update tarikh masa sekarang
+    // =======================================================
+    if (!data.date_in) {
+      const now = new Date().toISOString();
+
+      const { data: updatedData, error: updateError } =
+        await supabaseClient
+          .from("cars")
+          .update({ date_in: now })
+          .eq("id", data.id)
+          .select()
+          .single();
+
+      if (updateError) {
+        console.error(updateError);
+        showMessage("Gagal update tarikh masuk.", "error");
+        return;
+      }
+
+      currentCar = updatedData;
+
+      displayCar(updatedData, "✓ TARIKH MASUK BERJAYA DIUPDATE");
+      return;
+    }
+
+    // =======================================================
+    // SCAN KEDUA
+    // Jika date_out kosong -> benarkan pilih tarikh keluar
+    // =======================================================
+    if (!data.date_out) {
+      displayCar(data, "KERETA DIJUMPAI - SILA PILIH TARIKH KELUAR");
+      dateOutSection.classList.remove("hidden");
+
+      document.getElementById("selectedDateOut").value =
+        new Date().toISOString().split("T")[0];
+
+      return;
+    }
+
+    // =======================================================
+    // JIKA KEDUA-DUA TARIKH SUDAH ADA
+    // =======================================================
+    displayCar(data, "KERETA INI SUDAH MEMPUNYAI TARIKH MASUK DAN KELUAR");
+  }
+
+  function displayCar(car, title) {
+    document.getElementById("resultTitle").textContent = title;
+
+    document.getElementById("engineNo").textContent = car.engine_no || "-";
+    document.getElementById("dateIn").textContent = formatDate(car.date_in);
+    document.getElementById("dateOut").textContent = formatDate(car.date_out);
+    document.getElementById("location").textContent = car.car_location || "-";
+
+    let status = "BELUM MASUK";
+
+    if (car.date_in && !car.date_out) {
+      status = "KERETA DAH MASUK";
+    }
+
+    if (car.date_in && car.date_out) {
+      status = "SELESAI / KELUAR";
+    }
+
+    document.getElementById("status").textContent = status;
+
+    carResult.classList.remove("hidden");
+  }
+
+  document.getElementById("updateDateOutBtn").addEventListener("click", async () => {
+    if (!currentCar) return;
+
+    const selectedDate = document.getElementById("selectedDateOut").value;
+
+    if (!selectedDate) {
+      showMessage("Sila pilih tarikh keluar.", "error");
+      return;
+    }
+
+    const { data, error } = await supabaseClient
+      .from("cars")
+      .update({
+        date_out: selectedDate + "T00:00:00+08:00"
+      })
+      .eq("id", currentCar.id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error(error);
+      showMessage("Gagal update tarikh keluar.", "error");
+      return;
+    }
+
+    currentCar = data;
+    dateOutSection.classList.add("hidden");
+
+    displayCar(data, "✓ TARIKH KELUAR BERJAYA DIUPDATE");
+  });
+
+  startBtn.addEventListener("click", startScanner);
+  stopBtn.addEventListener("click", stopScanner);
+
+  document.getElementById("scanAgainBtn").addEventListener("click", () => {
+    currentCar = null;
+    dateOutSection.classList.add("hidden");
+    carResult.classList.add("hidden");
+    clearMessage();
+    startScanner();
+  });
+</script>
+
+</body>
+</html>

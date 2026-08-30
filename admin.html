@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Car Database Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box} body{margin:0;font-family:Arial,sans-serif;background:#f4f6f8;color:#1f2937}
+.container{max-width:1200px;margin:auto;padding:20px}
+header{display:flex;justify-content:space-between;align-items:center;gap:15px;flex-wrap:wrap;margin-bottom:20px}
+h1{margin:0;font-size:28px}.subtitle{color:#6b7280;margin:6px 0 0}
+.card{background:#fff;border-radius:16px;padding:20px;box-shadow:0 4px 18px rgba(0,0,0,.07)}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap}
+input{flex:1;min-width:220px;padding:13px;border:1px solid #d1d5db;border-radius:10px;font-size:16px}
+button{border:0;border-radius:10px;padding:13px 18px;font-weight:bold;cursor:pointer;background:#111827;color:#fff}
+button.secondary{background:#e5e7eb;color:#111827}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:15px;margin:20px 0}
+.stat{background:#fff;padding:18px;border-radius:14px;box-shadow:0 4px 18px rgba(0,0,0,.06)}
+.stat span{display:block;color:#6b7280;font-size:13px}.stat strong{display:block;font-size:28px;margin-top:8px}
+.table-card{overflow-x:auto}.loading,.empty{text-align:center;padding:35px;color:#6b7280}
+table{width:100%;border-collapse:collapse;min-width:780px}th,td{padding:14px;text-align:left;border-bottom:1px solid #e5e7eb}
+th{font-size:12px;color:#6b7280;text-transform:uppercase}.badge{padding:6px 10px;border-radius:20px;font-size:12px;font-weight:bold;white-space:nowrap}
+.pending{background:#f3f4f6}.in{background:#dcfce7;color:#166534}.done{background:#dbeafe;color:#1d4ed8}
+@media(max-width:600px){.container{padding:12px}.stats{grid-template-columns:1fr}.card{padding:15px}h1{font-size:23px}}
+</style>
+</head>
+<body>
+<div class="container">
+<header>
+<div>
+<h1>🚗 Car Database</h1>
+<p class="subtitle">Dashboard Prototype</p>
+</div>
+<button id="refreshBtn">🔄 Refresh Data</button>
+</header>
+
+<div class="stats">
+<div class="stat"><span>JUMLAH KERETA</span><strong id="totalCars">-</strong></div>
+<div class="stat"><span>KERETA DALAM SIMPANAN</span><strong id="carsIn">-</strong></div>
+<div class="stat"><span>KERETA SUDAH KELUAR</span><strong id="carsOut">-</strong></div>
+</div>
+
+<div class="card">
+<div class="toolbar">
+<input id="searchInput" type="text" placeholder="🔍 Cari nombor enjin atau lokasi...">
+<button class="secondary" id="clearBtn">Clear</button>
+</div>
+</div>
+
+<div class="card table-card" style="margin-top:20px">
+<div id="tableArea" class="loading">Sedang mengambil data...</div>
+</div>
+</div>
+
+<script>
+// =====================================================
+// MASUKKAN SUPABASE PROJECT URL DAN ANON KEY
+// =====================================================
+const SUPABASE_URL = "https://uqgdxexdqqgldkuqibei.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_0In4z7mb4SxpRquKi454fQ_pWS33pS4";
+
+const supabaseClient = window.supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY
+);
+
+let cars = [];
+
+function formatDate(value) {
+  if (!value) return "-";
+  return new Date(value).toLocaleString("ms-MY", {
+    timeZone: "Asia/Kuala_Lumpur",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit"
+  });
+}
+
+function getStatus(car) {
+  if (!car.date_in) return { text: "BELUM MASUK", class: "pending" };
+  if (car.date_in && !car.date_out) return { text: "DALAM SIMPANAN", class: "in" };
+  return { text: "SUDAH KELUAR", class: "done" };
+}
+
+async function loadCars() {
+  const area = document.getElementById("tableArea");
+
+  if (SUPABASE_URL.includes("PASTE_") || SUPABASE_ANON_KEY.includes("PASTE_")) {
+    area.innerHTML = '<div class="empty">Masukkan Supabase URL dan Anon Key dalam fail HTML terlebih dahulu.</div>';
+    return;
+  }
+
+  area.innerHTML = '<div class="loading">Sedang mengambil data...</div>';
+
+  const { data, error } = await supabaseClient
+    .from("cars")
+    .select("*")
+    .order("id", { ascending: false });
+
+  if (error) {
+    console.error(error);
+    area.innerHTML = '<div class="empty">❌ Gagal mengambil data: ' + error.message + '</div>';
+    return;
+  }
+
+  cars = data || [];
+  updateStats();
+  renderCars();
+}
+
+function updateStats() {
+  document.getElementById("totalCars").textContent = cars.length;
+  document.getElementById("carsIn").textContent =
+    cars.filter(c => c.date_in && !c.date_out).length;
+  document.getElementById("carsOut").textContent =
+    cars.filter(c => c.date_in && c.date_out).length;
+}
+
+function renderCars() {
+  const area = document.getElementById("tableArea");
+  const keyword = document.getElementById("searchInput").value.toLowerCase().trim();
+
+  const filtered = cars.filter(car =>
+    (car.engine_no || "").toLowerCase().includes(keyword) ||
+    (car.car_location || "").toLowerCase().includes(keyword)
+  );
+
+  if (!filtered.length) {
+    area.innerHTML = '<div class="empty">Tiada data dijumpai.</div>';
+    return;
+  }
+
+  let html = `
+    <table>
+      <thead>
+        <tr>
+          <th>No.</th>
+          <th>No. Enjin</th>
+          <th>Tarikh Masuk</th>
+          <th>Tarikh Keluar</th>
+          <th>Lokasi</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+  `;
+
+  filtered.forEach((car, index) => {
+    const status = getStatus(car);
+
+    html += `
+      <tr>
+        <td>${index + 1}</td>
+        <td><strong>${car.engine_no || "-"}</strong></td>
+        <td>${formatDate(car.date_in)}</td>
+        <td>${formatDate(car.date_out)}</td>
+        <td>${car.car_location || "-"}</td>
+        <td><span class="badge ${status.class}">${status.text}</span></td>
+      </tr>
+    `;
+  });
+
+  html += '</tbody></table>';
+  area.innerHTML = html;
+}
+
+document.getElementById("searchInput").addEventListener("input", renderCars);
+
+document.getElementById("clearBtn").addEventListener("click", () => {
+  document.getElementById("searchInput").value = "";
+  renderCars();
+});
+
+document.getElementById("refreshBtn").addEventListener("click", loadCars);
+
+loadCars();
+</script>
+</body>
+</html>
